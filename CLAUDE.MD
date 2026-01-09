@@ -107,7 +107,18 @@ Methods:
 - Launches browser for initial authentication
 - Returns authenticated YouTube API service
 
+**Function: `check_existing_stream(youtube, title, scheduled_start_time)`**
+- Queries existing YouTube broadcasts with status='upcoming'
+- Checks for duplicate streams by:
+  - Exact title match
+  - Same date with matching church name
+- Returns existing broadcast info if duplicate found
+- Returns None if no duplicates detected
+- Gracefully handles API errors with warnings
+
 **Function: `create_youtube_stream(title, scheduled_start_time, description)`**
+- Checks for existing streams first using `check_existing_stream()`
+- Raises ValueError if duplicate stream already exists
 - Creates live broadcast with `liveBroadcasts().insert()`
   - Sets privacy based on YOUTUBE_PRIVACY_STATUS (public/unlisted/private)
   - Validates privacy status and defaults to 'public' if invalid
@@ -125,6 +136,7 @@ Methods:
 - URL-encodes passage references
 - Returns list of (passage_name, url) tuples
 - Format: `https://www.biblegateway.com/passage/?search={passage}&version=NIV`
+- URLs are placed on separate lines in description for YouTube clickability
 
 ### Data Flow
 
@@ -140,6 +152,8 @@ Planning Center API
 [Format YouTube Title]
     ↓
 YouTube Data API
+    ↓
+[Check for Existing Streams] ← NEW
     ↓
 [Create Broadcast + Stream]
     ↓
@@ -168,6 +182,10 @@ YouTube Data API
 - YouTube API errors show detailed error information
 - No Sunday service found exits gracefully
 - Token refresh happens automatically
+- Duplicate stream detection prevents creating duplicate broadcasts
+  - Checks for exact title match
+  - Checks for same-day streams with matching church name
+  - Displays existing stream details and raises ValueError
 
 ## Development Notes
 

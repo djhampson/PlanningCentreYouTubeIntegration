@@ -201,6 +201,71 @@ def get_youtube_service():
     return build('youtube', 'v3', credentials=creds)
 
 
+def check_existing_stream(youtube, title, scheduled_start_time):
+    """
+    Check if a YouTube Live Stream already exists for the given title or date
+
+    Args:
+        youtube: YouTube API service object
+        title: The stream title to check
+        scheduled_start_time: datetime object for when the stream is scheduled
+
+    Returns:
+        dict with existing broadcast info if found, None otherwise
+    """
+    try:
+        # Query for upcoming broadcasts
+        request = youtube.liveBroadcasts().list(
+            part='snippet,status',
+            broadcastStatus='upcoming',
+            maxResults=50
+        )
+        response = request.execute()
+
+        broadcasts = response.get('items', [])
+
+        # Convert scheduled_start_time to date for comparison
+        if scheduled_start_time.tzinfo is None:
+            scheduled_start_time = scheduled_start_time.replace(tzinfo=timezone.utc)
+        target_date = scheduled_start_time.date()
+
+        # Check each broadcast for duplicates
+        for broadcast in broadcasts:
+            broadcast_title = broadcast['snippet']['title']
+            broadcast_start_str = broadcast['snippet'].get('scheduledStartTime')
+
+            if broadcast_start_str:
+                broadcast_start = date_parser.parse(broadcast_start_str)
+                broadcast_date = broadcast_start.date()
+
+                # Check for exact title match
+                if broadcast_title == title:
+                    return {
+                        'id': broadcast['id'],
+                        'title': broadcast_title,
+                        'scheduled_start': broadcast_start_str,
+                        'watch_url': f"https://www.youtube.com/watch?v={broadcast['id']}"
+                    }
+
+                # Check for same date match (to catch potential duplicates)
+                if broadcast_date == target_date:
+                    # Check if the broadcast is for the same church
+                    if CHURCH_NAME in broadcast_title:
+                        return {
+                            'id': broadcast['id'],
+                            'title': broadcast_title,
+                            'scheduled_start': broadcast_start_str,
+                            'watch_url': f"https://www.youtube.com/watch?v={broadcast['id']}"
+                        }
+
+        return None
+
+    except HttpError as e:
+        print(f"\n⚠ Warning: Could not check for existing streams: {e}")
+        # Don't fail the entire process if we can't check
+        return None
+
+
 def create_youtube_stream(title, scheduled_start_time, description=""):
     """
     Create a YouTube Live Stream
@@ -222,6 +287,25 @@ def create_youtube_stream(title, scheduled_start_time, description=""):
     try:
         # Get YouTube API service
         youtube = get_youtube_service()
+
+        # Check for existing streams
+        print("\n   Checking for existing streams...")
+        existing_stream = check_existing_stream(youtube, title, scheduled_start_time)
+
+        if existing_stream:
+            print("\n" + "=" * 80)
+            print("ERROR: Duplicate Stream Found")
+            print("=" * 80)
+            print(f"\nA YouTube Live Stream already exists for this service:")
+            print(f"  Title: {existing_stream['title']}")
+            print(f"  Scheduled: {existing_stream['scheduled_start']}")
+            print(f"  Watch URL: {existing_stream['watch_url']}")
+            print(f"  Broadcast ID: {existing_stream['id']}")
+            print("\nPlease use the existing stream or delete it before creating a new one.")
+            print("=" * 80)
+            raise ValueError(f"Duplicate stream already exists: {existing_stream['watch_url']}")
+
+        print("   ✓ No duplicate streams found")
 
         # Convert datetime to ISO 8601 format with timezone
         if scheduled_start_time.tzinfo is None:
@@ -411,7 +495,8 @@ def main():
             description_parts.append("")
             description_parts.append("Read along:")
             for passage, url in bible_links:
-                description_parts.append(f"  {passage}: {url}")
+                description_parts.append(f"{passage}:")
+                description_parts.append(url)
 
         description_parts.append("")
         description_parts.append(f"Service Date: {details['service_date'].strftime('%A, %d %B %Y at %I:%M %p')}")

@@ -43,18 +43,90 @@ pip install -r requirements.txt
 python create_youtube_stream.py
 ```
 
-On first run, you'll be prompted to authorize the YouTube API access through your browser.
+**First Run:**
+- A browser window will open for YouTube OAuth authentication
+- Sign in with your Google account that manages your YouTube channel
+- Grant the requested permissions
+- The credentials will be saved locally for future runs
+
+**Subsequent Runs:**
+- The script will use saved credentials automatically
+- No browser authentication needed
+
+## What You'll Get
+
+After running the script successfully, you'll receive:
+
+✅ **YouTube Live Stream** scheduled for your next Sunday service at 4pm
+✅ **Formatted Title** like: `Southside Anglican - 11 January 2026 - General - Psalm 77, Hebrews 10:19-25 - Holding Fast Together`
+✅ **Description** with sermon details and Bible reading
+✅ **Watch URL** to share with your congregation
+✅ **Stream Key** and server details for OBS or other streaming software
 
 ## Configuration
 
-See `.env.example` for all available configuration options.
+See `.env.example` for all available configuration options:
+
+- **PLANNING_CENTER_SERVICE_TYPE_ID**: Choose between Communion Service (1290793) or Contemporary Service (1293240)
+- **SERVICE_TIME**: Change from default 16:00 (4pm) if needed
+- **TIMEZONE**: Adjust for your location (default: Australia/Sydney)
+- **CHURCH_NAME**: Customize the church name in titles
 
 ## How It Works
 
-1. Queries Planning Center for the next Sunday service
-2. Extracts sermon title, series, and Bible reading from service items
-3. Creates a YouTube Live Stream scheduled for 4pm on that Sunday
-4. Formats the title as: `Southside Anglican - <Date> - <Series> - <Reading> - <Title>`
+1. **Queries Planning Center** - Fetches the next Sunday service plan
+2. **Extracts Details** - Sermon title, series, and Bible readings from service items
+3. **Formats Title** - Creates YouTube title: `<Church> - <Date> - <Series> - <Reading> - <Title>`
+4. **Creates Stream** - Uses YouTube Data API to:
+   - Create a scheduled live broadcast
+   - Create a stream endpoint
+   - Bind them together
+   - Configure settings (DVR, auto-start, recording, etc.)
+
+## Output Example
+
+```
+Planning Center to YouTube Live Stream Creator
+================================================================================
+
+1. Fetching next Sunday service from Planning Center...
+   ✓ Found plan: Holding Fast Together (ID: 85232838)
+
+2. Fetching service items...
+   ✓ Found 22 items
+
+3. Extracting sermon details...
+   Sermon Title: Holding Fast Together
+   Sermon Series: General
+   Bible Reading: Psalm 77, Hebrews 10:19-25
+   Service Date: Sunday, 11 January 2026
+
+4. Formatting YouTube stream title...
+   ✓ Title: Southside Anglican - 11 January 2026 - General - Psalm 77, Hebrews 10:19-25 - Holding Fast Together
+
+5. Creating YouTube Live Stream...
+   ✓ Broadcast created
+   ✓ Stream created
+   ✓ Broadcast bound to stream
+
+SUCCESS! YouTube Live Stream Created
+✓ Watch URL: https://www.youtube.com/watch?v=...
+✓ Stream Key and server details provided
+```
+
+## Troubleshooting
+
+**No upcoming Sunday found:**
+- Check that your PLANNING_CENTER_SERVICE_TYPE_ID is correct
+- Verify there are plans scheduled in Planning Center
+
+**YouTube authentication fails:**
+- Ensure you've added your email as a test user in OAuth consent screen
+- Check that YouTube Data API v3 is enabled in your Google Cloud project
+
+**Missing Bible readings:**
+- Script looks for items titled "Readings" or containing "reading"
+- Ensure readings are in the item description, not just the title
 
 ## Documentation
 

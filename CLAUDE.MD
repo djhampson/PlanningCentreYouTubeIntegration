@@ -74,6 +74,7 @@ Environment variables for credentials and settings:
 - `SERVICE_TIME` - Service time in 24h format (16:00)
 - `TIMEZONE` - Timezone (Australia/Sydney)
 - `YOUTUBE_CLIENT_SECRETS_FILE` - Path to OAuth credentials (client_secret.json)
+- `YOUTUBE_PRIVACY_STATUS` - Stream visibility: public, unlisted, or private (default: public)
 
 ### `client_secret.json`
 YouTube OAuth 2.0 credentials (Desktop app type)
@@ -108,7 +109,8 @@ Methods:
 
 **Function: `create_youtube_stream(title, scheduled_start_time, description)`**
 - Creates live broadcast with `liveBroadcasts().insert()`
-  - Sets privacy to public
+  - Sets privacy based on YOUTUBE_PRIVACY_STATUS (public/unlisted/private)
+  - Validates privacy status and defaults to 'public' if invalid
   - Configures auto-start, auto-stop, DVR, recording
   - Sets scheduled start time
 - Creates stream endpoint with `liveStreams().insert()`
@@ -116,6 +118,13 @@ Methods:
   - Variable resolution and framerate
 - Binds broadcast to stream with `liveBroadcasts().bind()`
 - Returns watch URL, stream key, and ingestion address
+
+**Function: `generate_bible_gateway_links(bible_reading)`**
+- Parses Bible readings separated by commas
+- Generates Bible Gateway URLs with NIV translation
+- URL-encodes passage references
+- Returns list of (passage_name, url) tuples
+- Format: `https://www.biblegateway.com/passage/?search={passage}&version=NIV`
 
 ### Data Flow
 

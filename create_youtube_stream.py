@@ -38,6 +38,7 @@ TIMEZONE = os.getenv('TIMEZONE', 'Australia/Sydney')
 YOUTUBE_CLIENT_SECRETS_FILE = os.getenv('YOUTUBE_CLIENT_SECRETS_FILE', 'client_secret.json')
 YOUTUBE_TOKEN_FILE = 'token.pickle'
 YOUTUBE_SCOPES = ['https://www.googleapis.com/auth/youtube.force-ssl']
+YOUTUBE_PRIVACY_STATUS = os.getenv('YOUTUBE_PRIVACY_STATUS', 'public').lower()
 
 # API Base URL
 BASE_URL = "https://api.planningcenteronline.com/services/v2"
@@ -136,6 +137,36 @@ def format_youtube_title(service_date, sermon_series, bible_reading, sermon_titl
     return title
 
 
+def generate_bible_gateway_links(bible_reading):
+    """
+    Generate Bible Gateway links for Bible readings
+
+    Args:
+        bible_reading: String containing Bible readings (e.g., "Psalm 77, Hebrews 10:19-25")
+
+    Returns:
+        List of tuples: [(passage_name, url), ...]
+    """
+    import urllib.parse
+
+    if not bible_reading or bible_reading == "TBA":
+        return []
+
+    # Split by comma to handle multiple readings
+    readings = [r.strip() for r in bible_reading.split(',')]
+
+    links = []
+    for reading in readings:
+        if reading:
+            # URL encode the passage
+            encoded_passage = urllib.parse.quote(reading)
+            # Create Bible Gateway URL with NIV translation
+            url = f"https://www.biblegateway.com/passage/?search={encoded_passage}&version=NIV"
+            links.append((reading, url))
+
+    return links
+
+
 def get_youtube_service():
     """
     Authenticate and return YouTube API service
@@ -170,6 +201,71 @@ def get_youtube_service():
     return build('youtube', 'v3', credentials=creds)
 
 
+def check_existing_stream(youtube, title, scheduled_start_time):
+    """
+    Check if a YouTube Live Stream already exists for the given title or date
+
+    Args:
+        youtube: YouTube API service object
+        title: The stream title to check
+        scheduled_start_time: datetime object for when the stream is scheduled
+
+    Returns:
+        dict with existing broadcast info if found, None otherwise
+    """
+    try:
+        # Query for upcoming broadcasts
+        request = youtube.liveBroadcasts().list(
+            part='snippet,status',
+            broadcastStatus='upcoming',
+            maxResults=50
+        )
+        response = request.execute()
+
+        broadcasts = response.get('items', [])
+
+        # Convert scheduled_start_time to date for comparison
+        if scheduled_start_time.tzinfo is None:
+            scheduled_start_time = scheduled_start_time.replace(tzinfo=timezone.utc)
+        target_date = scheduled_start_time.date()
+
+        # Check each broadcast for duplicates
+        for broadcast in broadcasts:
+            broadcast_title = broadcast['snippet']['title']
+            broadcast_start_str = broadcast['snippet'].get('scheduledStartTime')
+
+            if broadcast_start_str:
+                broadcast_start = date_parser.parse(broadcast_start_str)
+                broadcast_date = broadcast_start.date()
+
+                # Check for exact title match
+                if broadcast_title == title:
+                    return {
+                        'id': broadcast['id'],
+                        'title': broadcast_title,
+                        'scheduled_start': broadcast_start_str,
+                        'watch_url': f"https://www.youtube.com/watch?v={broadcast['id']}"
+                    }
+
+                # Check for same date match (to catch potential duplicates)
+                if broadcast_date == target_date:
+                    # Check if the broadcast is for the same church
+                    if CHURCH_NAME in broadcast_title:
+                        return {
+                            'id': broadcast['id'],
+                            'title': broadcast_title,
+                            'scheduled_start': broadcast_start_str,
+                            'watch_url': f"https://www.youtube.com/watch?v={broadcast['id']}"
+                        }
+
+        return None
+
+    except HttpError as e:
+        print(f"\n⚠ Warning: Could not check for existing streams: {e}")
+        # Don't fail the entire process if we can't check
+        return None
+
+
 def create_youtube_stream(title, scheduled_start_time, description=""):
     """
     Create a YouTube Live Stream
@@ -192,6 +288,25 @@ def create_youtube_stream(title, scheduled_start_time, description=""):
         # Get YouTube API service
         youtube = get_youtube_service()
 
+        # Check for existing streams
+        print("\n   Checking for existing streams...")
+        existing_stream = check_existing_stream(youtube, title, scheduled_start_time)
+
+        if existing_stream:
+            print("\n" + "=" * 80)
+            print("ERROR: Duplicate Stream Found")
+            print("=" * 80)
+            print(f"\nA YouTube Live Stream already exists for this service:")
+            print(f"  Title: {existing_stream['title']}")
+            print(f"  Scheduled: {existing_stream['scheduled_start']}")
+            print(f"  Watch URL: {existing_stream['watch_url']}")
+            print(f"  Broadcast ID: {existing_stream['id']}")
+            print("\nPlease use the existing stream or delete it before creating a new one.")
+            print("=" * 80)
+            raise ValueError(f"Duplicate stream already exists: {existing_stream['watch_url']}")
+
+        print("   ✓ No duplicate streams found")
+
         # Convert datetime to ISO 8601 format with timezone
         if scheduled_start_time.tzinfo is None:
             scheduled_start_time = scheduled_start_time.replace(tzinfo=timezone.utc)
@@ -199,6 +314,11 @@ def create_youtube_stream(title, scheduled_start_time, description=""):
 
         # Step 1: Create the broadcast
         print("\n   Creating broadcast...")
+
+        # Validate privacy status
+        valid_privacy_statuses = ['public', 'unlisted', 'private']
+        privacy_status = YOUTUBE_PRIVACY_STATUS if YOUTUBE_PRIVACY_STATUS in valid_privacy_statuses else 'public'
+
         broadcast_body = {
             'snippet': {
                 'title': title,
@@ -206,7 +326,7 @@ def create_youtube_stream(title, scheduled_start_time, description=""):
                 'scheduledStartTime': scheduled_start_iso,
             },
             'status': {
-                'privacyStatus': 'public',
+                'privacyStatus': privacy_status,
                 'selfDeclaredMadeForKids': False,
             },
             'contentDetails': {
@@ -361,13 +481,27 @@ def main():
         )
 
         # Create description
-        description = f"""Join us for our Sunday service at {CHURCH_NAME}.
+        description_parts = [
+            f"Join us for our Sunday service at {CHURCH_NAME}.",
+            "",
+            f"Sermon: {details['sermon_title']}",
+            f"Series: {details['sermon_series']}",
+            f"Bible Reading: {details['bible_reading']}",
+        ]
 
-Sermon: {details['sermon_title']}
-Series: {details['sermon_series']}
-Bible Reading: {details['bible_reading']}
+        # Add Bible Gateway links
+        bible_links = generate_bible_gateway_links(details['bible_reading'])
+        if bible_links:
+            description_parts.append("")
+            description_parts.append("Read along:")
+            for passage, url in bible_links:
+                description_parts.append(f"{passage}:")
+                description_parts.append(url)
 
-Service Date: {details['service_date'].strftime('%A, %d %B %Y at %I:%M %p')}"""
+        description_parts.append("")
+        description_parts.append(f"Service Date: {details['service_date'].strftime('%A, %d %B %Y at %I:%M %p')}")
+
+        description = "\n".join(description_parts)
 
         result = create_youtube_stream(youtube_title, scheduled_time, description)
 

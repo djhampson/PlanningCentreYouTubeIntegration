@@ -59,9 +59,10 @@ After running the script successfully, you'll receive:
 
 ✅ **YouTube Live Stream** scheduled for your next Sunday service at 4pm
 ✅ **Formatted Title** like: `Southside Anglican - 11 January 2026 - General - Psalm 77, Hebrews 10:19-25 - Holding Fast Together`
-✅ **Description** with sermon details and Bible reading
+✅ **Description** with sermon details and Bible Gateway links (NIV) for easy reading access
 ✅ **Watch URL** to share with your congregation
 ✅ **Stream Key** and server details for OBS or other streaming software
+✅ **Configurable Privacy** - Set streams as public, unlisted, or private
 
 ## Configuration
 
@@ -71,6 +72,7 @@ See `.env.example` for all available configuration options:
 - **SERVICE_TIME**: Change from default 16:00 (4pm) if needed
 - **TIMEZONE**: Adjust for your location (default: Australia/Sydney)
 - **CHURCH_NAME**: Customize the church name in titles
+- **YOUTUBE_PRIVACY_STATUS**: Set stream visibility - `public`, `unlisted`, or `private` (default: public)
 
 ## How It Works
 

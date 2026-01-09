@@ -74,6 +74,7 @@ Environment variables for credentials and settings:
 - `SERVICE_TIME` - Service time in 24h format (16:00)
 - `TIMEZONE` - Timezone (Australia/Sydney)
 - `YOUTUBE_CLIENT_SECRETS_FILE` - Path to OAuth credentials (client_secret.json)
+- `YOUTUBE_PRIVACY_STATUS` - Stream visibility: public, unlisted, or private (default: public)
 
 ### `client_secret.json`
 YouTube OAuth 2.0 credentials (Desktop app type)
@@ -106,9 +107,21 @@ Methods:
 - Launches browser for initial authentication
 - Returns authenticated YouTube API service
 
+**Function: `check_existing_stream(youtube, title, scheduled_start_time)`**
+- Queries existing YouTube broadcasts with status='upcoming'
+- Checks for duplicate streams by:
+  - Exact title match
+  - Same date with matching church name
+- Returns existing broadcast info if duplicate found
+- Returns None if no duplicates detected
+- Gracefully handles API errors with warnings
+
 **Function: `create_youtube_stream(title, scheduled_start_time, description)`**
+- Checks for existing streams first using `check_existing_stream()`
+- Raises ValueError if duplicate stream already exists
 - Creates live broadcast with `liveBroadcasts().insert()`
-  - Sets privacy to public
+  - Sets privacy based on YOUTUBE_PRIVACY_STATUS (public/unlisted/private)
+  - Validates privacy status and defaults to 'public' if invalid
   - Configures auto-start, auto-stop, DVR, recording
   - Sets scheduled start time
 - Creates stream endpoint with `liveStreams().insert()`
@@ -116,6 +129,14 @@ Methods:
   - Variable resolution and framerate
 - Binds broadcast to stream with `liveBroadcasts().bind()`
 - Returns watch URL, stream key, and ingestion address
+
+**Function: `generate_bible_gateway_links(bible_reading)`**
+- Parses Bible readings separated by commas
+- Generates Bible Gateway URLs with NIV translation
+- URL-encodes passage references
+- Returns list of (passage_name, url) tuples
+- Format: `https://www.biblegateway.com/passage/?search={passage}&version=NIV`
+- URLs are placed on separate lines in description for YouTube clickability
 
 ### Data Flow
 
@@ -131,6 +152,8 @@ Planning Center API
 [Format YouTube Title]
     ↓
 YouTube Data API
+    ↓
+[Check for Existing Streams] ← NEW
     ↓
 [Create Broadcast + Stream]
     ↓
@@ -159,6 +182,10 @@ YouTube Data API
 - YouTube API errors show detailed error information
 - No Sunday service found exits gracefully
 - Token refresh happens automatically
+- Duplicate stream detection prevents creating duplicate broadcasts
+  - Checks for exact title match
+  - Checks for same-day streams with matching church name
+  - Displays existing stream details and raises ValueError
 
 ## Development Notes
 

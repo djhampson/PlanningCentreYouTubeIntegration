@@ -11,9 +11,15 @@ This script:
 import os
 import sys
 import requests
-from datetime import datetime
+import pickle
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 from dateutil import parser as date_parser
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 # Load environment variables
 load_dotenv()
@@ -27,6 +33,11 @@ SERVICE_TYPE_ID = os.getenv('PLANNING_CENTER_SERVICE_TYPE_ID')
 CHURCH_NAME = os.getenv('CHURCH_NAME', 'Southside Anglican')
 SERVICE_TIME = os.getenv('SERVICE_TIME', '16:00')
 TIMEZONE = os.getenv('TIMEZONE', 'Australia/Sydney')
+
+# YouTube Configuration
+YOUTUBE_CLIENT_SECRETS_FILE = os.getenv('YOUTUBE_CLIENT_SECRETS_FILE', 'client_secret.json')
+YOUTUBE_TOKEN_FILE = 'token.pickle'
+YOUTUBE_SCOPES = ['https://www.googleapis.com/auth/youtube.force-ssl']
 
 # API Base URL
 BASE_URL = "https://api.planningcenteronline.com/services/v2"
@@ -125,34 +136,166 @@ def format_youtube_title(service_date, sermon_series, bible_reading, sermon_titl
     return title
 
 
-def create_youtube_stream(title, scheduled_start_time):
+def get_youtube_service():
     """
-    Create a YouTube Live Stream (placeholder - requires YouTube API setup)
+    Authenticate and return YouTube API service
+
+    Returns:
+        YouTube API service object
+    """
+    creds = None
+
+    # Check if we have saved credentials
+    if os.path.exists(YOUTUBE_TOKEN_FILE):
+        with open(YOUTUBE_TOKEN_FILE, 'rb') as token:
+            creds = pickle.load(token)
+
+    # If no valid credentials, authenticate
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            print("   Refreshing YouTube credentials...")
+            creds.refresh(Request())
+        else:
+            print("   Starting YouTube OAuth flow...")
+            print("   A browser window will open for authentication.")
+            flow = InstalledAppFlow.from_client_secrets_file(
+                YOUTUBE_CLIENT_SECRETS_FILE, YOUTUBE_SCOPES)
+            creds = flow.run_local_server(port=0)
+
+        # Save credentials for future use
+        with open(YOUTUBE_TOKEN_FILE, 'wb') as token:
+            pickle.dump(creds, token)
+        print("   ✓ YouTube credentials saved")
+
+    return build('youtube', 'v3', credentials=creds)
+
+
+def create_youtube_stream(title, scheduled_start_time, description=""):
+    """
+    Create a YouTube Live Stream
 
     Args:
         title: The stream title
         scheduled_start_time: datetime object for when to schedule the stream
+        description: Optional description for the stream
+
+    Returns:
+        dict with broadcast_id and stream_url
     """
     print("\n" + "=" * 80)
     print("YouTube Live Stream Creation")
     print("=" * 80)
     print(f"\nTitle: {title}")
     print(f"Scheduled Start: {scheduled_start_time}")
-    print("\nNote: YouTube API integration not yet implemented.")
-    print("To complete this, you need to:")
-    print("1. Set up YouTube Data API v3 credentials")
-    print("2. Download OAuth client secret JSON")
-    print("3. Implement OAuth flow and API calls")
-    print("=" * 80)
 
-    # TODO: Implement YouTube API integration
-    # This would use google-api-python-client to:
-    # 1. Authenticate with OAuth 2.0
-    # 2. Call liveBroadcasts.insert to create the broadcast
-    # 3. Call liveStreams.insert to create the stream
-    # 4. Bind the broadcast to the stream
+    try:
+        # Get YouTube API service
+        youtube = get_youtube_service()
 
-    return None
+        # Convert datetime to ISO 8601 format with timezone
+        if scheduled_start_time.tzinfo is None:
+            scheduled_start_time = scheduled_start_time.replace(tzinfo=timezone.utc)
+        scheduled_start_iso = scheduled_start_time.isoformat()
+
+        # Step 1: Create the broadcast
+        print("\n   Creating broadcast...")
+        broadcast_body = {
+            'snippet': {
+                'title': title,
+                'description': description,
+                'scheduledStartTime': scheduled_start_iso,
+            },
+            'status': {
+                'privacyStatus': 'public',
+                'selfDeclaredMadeForKids': False,
+            },
+            'contentDetails': {
+                'enableAutoStart': True,
+                'enableAutoStop': True,
+                'enableDvr': True,
+                'enableEmbed': True,
+                'recordFromStart': True,
+            }
+        }
+
+        broadcast_response = youtube.liveBroadcasts().insert(
+            part='snippet,status,contentDetails',
+            body=broadcast_body
+        ).execute()
+
+        broadcast_id = broadcast_response['id']
+        print(f"   ✓ Broadcast created (ID: {broadcast_id})")
+
+        # Step 2: Create the stream
+        print("   Creating stream...")
+        stream_body = {
+            'snippet': {
+                'title': f"Stream for {title}",
+            },
+            'cdn': {
+                'frameRate': 'variable',
+                'ingestionType': 'rtmp',
+                'resolution': 'variable',
+            },
+            'contentDetails': {
+                'isReusable': False,
+            }
+        }
+
+        stream_response = youtube.liveStreams().insert(
+            part='snippet,cdn,contentDetails',
+            body=stream_body
+        ).execute()
+
+        stream_id = stream_response['id']
+        stream_key = stream_response['cdn']['ingestionInfo']['streamName']
+        ingestion_address = stream_response['cdn']['ingestionInfo']['ingestionAddress']
+
+        print(f"   ✓ Stream created (ID: {stream_id})")
+
+        # Step 3: Bind broadcast to stream
+        print("   Binding broadcast to stream...")
+        youtube.liveBroadcasts().bind(
+            part='id,contentDetails',
+            id=broadcast_id,
+            streamId=stream_id
+        ).execute()
+
+        print("   ✓ Broadcast bound to stream")
+
+        # Get the watch URL
+        watch_url = f"https://www.youtube.com/watch?v={broadcast_id}"
+
+        print("\n" + "=" * 80)
+        print("SUCCESS! YouTube Live Stream Created")
+        print("=" * 80)
+        print(f"\n✓ Watch URL: {watch_url}")
+        print(f"✓ Broadcast ID: {broadcast_id}")
+        print(f"✓ Stream ID: {stream_id}")
+        print(f"\nStreaming Information:")
+        print(f"  Server URL: {ingestion_address}")
+        print(f"  Stream Key: {stream_key}")
+        print("=" * 80)
+
+        return {
+            'broadcast_id': broadcast_id,
+            'stream_id': stream_id,
+            'watch_url': watch_url,
+            'stream_key': stream_key,
+            'ingestion_address': ingestion_address
+        }
+
+    except HttpError as e:
+        print(f"\n✗ YouTube API Error: {e}")
+        import json
+        error_details = json.loads(e.content)
+        print(f"  Details: {error_details}")
+        return None
+    except Exception as e:
+        print(f"\n✗ Error creating YouTube stream: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 
 def main():
@@ -217,7 +360,20 @@ def main():
             minute=int(SERVICE_TIME.split(':')[1])
         )
 
-        create_youtube_stream(youtube_title, scheduled_time)
+        # Create description
+        description = f"""Join us for our Sunday service at {CHURCH_NAME}.
+
+Sermon: {details['sermon_title']}
+Series: {details['sermon_series']}
+Bible Reading: {details['bible_reading']}
+
+Service Date: {details['service_date'].strftime('%A, %d %B %Y at %I:%M %p')}"""
+
+        result = create_youtube_stream(youtube_title, scheduled_time, description)
+
+        if not result:
+            print("\n✗ Failed to create YouTube Live Stream")
+            sys.exit(1)
 
         print("\n" + "=" * 80)
         print("Process completed!")

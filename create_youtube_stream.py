@@ -39,6 +39,7 @@ YOUTUBE_CLIENT_SECRETS_FILE = os.getenv('YOUTUBE_CLIENT_SECRETS_FILE', 'client_s
 YOUTUBE_TOKEN_FILE = 'token.pickle'
 YOUTUBE_SCOPES = ['https://www.googleapis.com/auth/youtube.force-ssl']
 YOUTUBE_PRIVACY_STATUS = os.getenv('YOUTUBE_PRIVACY_STATUS', 'public').lower()
+YOUTUBE_STREAM_ID = os.getenv('YOUTUBE_STREAM_ID', '').strip()
 
 # API Base URL
 BASE_URL = "https://api.planningcenteronline.com/services/v2"
@@ -335,6 +336,7 @@ def create_youtube_stream(title, scheduled_start_time, description=""):
                 'enableDvr': True,
                 'enableEmbed': True,
                 'recordFromStart': True,
+                'latencyPreference': 'low',
             }
         }
 
@@ -346,32 +348,50 @@ def create_youtube_stream(title, scheduled_start_time, description=""):
         broadcast_id = broadcast_response['id']
         print(f"   ✓ Broadcast created (ID: {broadcast_id})")
 
-        # Step 2: Create the stream
-        print("   Creating stream...")
-        stream_body = {
-            'snippet': {
-                'title': f"Stream for {title}",
-            },
-            'cdn': {
-                'frameRate': 'variable',
-                'ingestionType': 'rtmp',
-                'resolution': 'variable',
-            },
-            'contentDetails': {
-                'isReusable': False,
+        # Step 2: Get or create the stream
+        if YOUTUBE_STREAM_ID:
+            print(f"   Reusing existing stream (ID: {YOUTUBE_STREAM_ID})...")
+            stream_response = youtube.liveStreams().list(
+                part='snippet,cdn,contentDetails',
+                id=YOUTUBE_STREAM_ID
+            ).execute()
+
+            if not stream_response.get('items'):
+                raise ValueError(f"Stream ID '{YOUTUBE_STREAM_ID}' not found. Check YOUTUBE_STREAM_ID in .env")
+
+            stream_data = stream_response['items'][0]
+            stream_id = stream_data['id']
+            stream_key = stream_data['cdn']['ingestionInfo']['streamName']
+            ingestion_address = stream_data['cdn']['ingestionInfo']['ingestionAddress']
+            print(f"   ✓ Using existing stream (ID: {stream_id})")
+        else:
+            print("   Creating new reusable stream...")
+            stream_body = {
+                'snippet': {
+                    'title': f"Southside Anglican Reusable Stream",
+                },
+                'cdn': {
+                    'frameRate': 'variable',
+                    'ingestionType': 'rtmp',
+                    'resolution': 'variable',
+                },
+                'contentDetails': {
+                    'isReusable': True,
+                }
             }
-        }
 
-        stream_response = youtube.liveStreams().insert(
-            part='snippet,cdn,contentDetails',
-            body=stream_body
-        ).execute()
+            stream_response = youtube.liveStreams().insert(
+                part='snippet,cdn,contentDetails',
+                body=stream_body
+            ).execute()
 
-        stream_id = stream_response['id']
-        stream_key = stream_response['cdn']['ingestionInfo']['streamName']
-        ingestion_address = stream_response['cdn']['ingestionInfo']['ingestionAddress']
+            stream_id = stream_response['id']
+            stream_key = stream_response['cdn']['ingestionInfo']['streamName']
+            ingestion_address = stream_response['cdn']['ingestionInfo']['ingestionAddress']
 
-        print(f"   ✓ Stream created (ID: {stream_id})")
+            print(f"   ✓ Stream created (ID: {stream_id})")
+            print(f"\n   *** IMPORTANT: Save this stream ID to reuse the same stream key ***")
+            print(f"   Add to your .env file: YOUTUBE_STREAM_ID={stream_id}")
 
         # Step 3: Bind broadcast to stream
         print("   Binding broadcast to stream...")
